@@ -1,0 +1,82 @@
+name: Build and Deploy
+
+on:
+  push:
+  release:
+    types: [published]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+      with:
+        depth: 1
+    
+    - name: Set up Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '21' 
+    
+    - name: Install dependencies
+      run: npm install
+    
+    - name: Build library and create zip
+      run: npm run build:lib:zip
+    
+    - name: Upload lib zip as artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: nostr-rtc.zip
+        path: dist/nostr-rtc.zip
+
+    - name: Build test1
+      run: npm run build:test1
+
+    - name: Build bundle
+      run: npm run build:bundle:lib
+
+    - name: Upload bundle as artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: nostr-rtc-bundle.zip
+        path: dist/www/bundle
+
+    - name: Upload test1 as artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: nostr-rtc-test1.zip
+        path: dist/www/test1
+
+  build-gh-pages:
+    if: github.event_name == 'release' 
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+      with:
+        ref: gh-pages
+    
+    - name: Set up Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '21'  
+    
+    - name: Install dependencies
+      run: npm install
+    
+    - name: Build test1
+      run: npm run build:test1
+
+    - name: Build bundle
+      run: npm run build:bundle:lib
+    
+    - name: Deploy to GitHub Pages
+      uses: peaceiris/actions-gh-pages@v3
+      with:
+        target_branch: gh-pages  
+        source_dir: dist/www 
+        personal_token: ${{ secrets.GITHUB_TOKEN }}  

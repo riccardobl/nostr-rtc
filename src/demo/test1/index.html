@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebRTC on nostr</title>
+    <style>
+        .connected{
+            color: green;
+        }
+        .peer{
+            display: flex;
+            flex-direction: column;
+            margin: 10px;
+            font-family: monospace;
+        }
+        .pubkey{
+            color: blue;
+        }
+        .pubkey::before{
+            content: "Public Key: ";
+        }
+        .lastseen{
+            color: gray;
+        }
+        .lastseen::before{
+            content: "Last Seen: ";
+        }
+        .status{
+            color: gray;
+        }
+        .status::before{
+            content: "Status: ";
+        }
+        .logs{
+            display: flex;
+            flex-direction: column;
+            margin: 10px;
+            color: gray;
+            font-family: monospace;
+        }
+        .logs::before{
+            margin-left: -10px;
+            content: "Logs:";
+        }
+    </style>
+    <script>
+        function newchannel(){
+            window.location.hash='';
+            window.location.reload();
+        }
+        function joinchannel(){
+            var channel = prompt("Enter channel name");
+            if(channel){
+                window.location.hash=channel;
+                window.location.reload();
+            }
+        }
+    </script>
+</head>
+<body>
+    
+    <h1>WebRTC on nostr <button id="newchannel">new channel</button><button id="joinchannel">join channel</button><button id="setrelay">set relay</button></h1>
+    <pre id="channel"></pre>
+</body>
+</html>
