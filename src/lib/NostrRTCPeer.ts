@@ -64,7 +64,7 @@ export class NostrRTCPeer extends EventEmitter<{
         });
 
         if(typeof RTCPeerConnection === "function"){        
-            this.rtcConnection = new RTCPeerConnection({ iceServers: [] });
+            this.rtcConnection = new RTCPeerConnection({ iceServers: settings.STUN_SERVERS.map(s=>({urls:s})) });
             this.rtcConnection.ondatachannel = (e) => {
                 this.setDataChannel(e.channel);
             };
@@ -163,10 +163,11 @@ export class NostrRTCPeer extends EventEmitter<{
     }
 
     public async connect(): Promise<RTCSessionDescriptionInit | undefined> {
-        if(!this.rtcConnection) {
+        if(!this.rtcConnection){
             this.useTURN(true);
             return undefined;
         }
+        if(this.isTURN())return;
         const channel = this.rtcConnection.createDataChannel(`nostrtc:${this.connectionId}`);
         channel.binaryType = "arraybuffer";
         const offer = await this.rtcConnection.createOffer();
@@ -179,10 +180,11 @@ export class NostrRTCPeer extends EventEmitter<{
     }
 
     public async open(description: RTCSessionDescriptionInit): Promise<RTCSessionDescriptionInit | undefined> {
-        if(!this.rtcConnection || !description){
+        if(!this.rtcConnection || !description ){
             this.useTURN(true);
             return undefined;
         }
+        if(this.isTURN())return;
         await this.rtcConnection.setRemoteDescription(new RTCSessionDescription(description));
         const answer = await this.rtcConnection.createAnswer();
         if (!answer) throw new Error("No answer");
@@ -194,14 +196,16 @@ export class NostrRTCPeer extends EventEmitter<{
     }
 
     public async setRemoteDescription(description: RTCSessionDescriptionInit|undefined) {
-        if(!this.rtcConnection || !description){
+        if(!this.rtcConnection || !description ){
             this.useTURN(true);
             return;
         }
+        if(this.isTURN())return;
         await this.rtcConnection.setRemoteDescription(new RTCSessionDescription(description));
     }
 
     public async addRemoteIceCandidates(candidates: RTCIceCandidate[]) {
+        if(!this.rtcConnection || this.isTURN()) return;
         for (const candidate of candidates) {
             await this.rtcConnection?.addIceCandidate(candidate);
         }
@@ -230,6 +234,7 @@ export class NostrRTCPeer extends EventEmitter<{
 
     private async getChannel(): Promise<RTCDataChannel> {
         if (!this.channel) throw new Error("No channel");
+        if(this.isTURN()) throw new Error("TURN connection doesn't have an rtc channel");
         const channel = this.channel;
 
         // check if open
