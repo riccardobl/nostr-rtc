@@ -26,7 +26,7 @@ export class NostrRTCPeer extends EventEmitter<{
 }> {
     private readonly localIceCandidates: RTCIceCandidate[] = [];
     private readonly connectionId: string;
-    private readonly rtcConnection: RTCPeerConnection;
+    private readonly rtcConnection?: RTCPeerConnection;
     private readonly info: PeerInfo;
     private readonly settings: NostrRTCSettings;
 
@@ -39,74 +39,83 @@ export class NostrRTCPeer extends EventEmitter<{
     private candidateEmissionTimeout?: any;
     private candidateEmissionLoop?: any;
     private isChannelReady: boolean = false;
-    private useTURN: boolean = false;
+    private _useTURN: boolean = false;
+    private ready: boolean = false;
 
-    public static async connect(info: PeerInfo): Promise<{ connection: NostrRTCPeer; description: RTCSessionDescriptionInit }> {
-        const connection = new NostrRTCPeer(info, undefined);
-        const description = await connection.initializeConnection();
-        return { connection, description };
-    }
 
-    public static async open(info: PeerInfo, connectionId: string, description: RTCSessionDescriptionInit): Promise<{ connection: NostrRTCPeer; description: RTCSessionDescriptionInit | undefined }> {
-        const connection = new NostrRTCPeer(info, connectionId);
-        const answer = await connection.openConnection(description);
-        return { connection, description: answer };
-    }
-
-    private constructor(info: PeerInfo, connectionId?: string, settings: NostrRTCSettings = DefaultNostrRTCSettings) {
+    constructor(info: PeerInfo, connectionId?: string, settings: NostrRTCSettings = DefaultNostrRTCSettings) {
         super();
         this.connectionId = connectionId ?? uuidv7();
         this.info = info;
-        this.rtcConnection = new RTCPeerConnection({ iceServers: [] });
         this.settings = settings;
         this.status = ConnectionStatus.connecting;
 
-        this.rtcConnection.ondatachannel = (e) => {
-            this.setDataChannel(e.channel);
-        };
-
-        const emitCandidates = () => {
-            if (this.candidateEmissionTimeout) clearTimeout(this.candidateEmissionTimeout);
-
-            this.candidateEmissionTimeout = setTimeout(() => {
-                this.emit("candidates", this, this.localIceCandidates);
-            }, 1000);
-        };
-
-        this.rtcConnection.onicecandidate = (e) => {
-            let updated = false;
-            if (e.candidate) {
-                if (!this.localIceCandidates.includes(e.candidate)) {
-                    this.localIceCandidates.push(e.candidate);
-                    updated = true;
-                }
-            }
-            if (updated) {
-                emitCandidates();
-            }
-        };
-
-        this.rtcConnection.oniceconnectionstatechange = () => {
-            const useTURN = this.rtcConnection.iceConnectionState === "failed";
-            if (this.useTURN !== useTURN) {
-                this.emit("p2pState", this, !useTURN);
-            }
-            this.useTURN = useTURN;
-        };
-
-        this.candidateEmissionLoop = setInterval(() => {
-            emitCandidates();
-        }, 10000);
 
         this.on("ready", async () => {
             this.setStatus(ConnectionStatus.connected);
-            const channel = await this.getChannel();
-            channel.binaryType = "arraybuffer";
-            channel.addEventListener("message", (e) => {
-                const data: Uint8Array = e.data;
-                this.emit("data", this, data);
-            });
+            if(!this._useTURN){
+                const channel = await this.getChannel();
+                channel.binaryType = "arraybuffer";
+                channel.addEventListener("message", (e) => {
+                    const data: Uint8Array = e.data;
+                    this.emit("data", this, data);
+                });
+            }
         });
+
+        if(typeof RTCPeerConnection === "function"){        
+            this.rtcConnection = new RTCPeerConnection({ iceServers: [] });
+            this.rtcConnection.ondatachannel = (e) => {
+                this.setDataChannel(e.channel);
+            };
+
+            const emitCandidates = () => {
+                if (this.candidateEmissionTimeout) clearTimeout(this.candidateEmissionTimeout);
+
+                this.candidateEmissionTimeout = setTimeout(() => {
+                    this.emit("candidates", this, this.localIceCandidates);
+                }, 1000);
+            };
+
+            this.rtcConnection.onicecandidate = (e) => {
+                let updated = false;
+                if (e.candidate) {
+                    if (!this.localIceCandidates.includes(e.candidate)) {
+                        this.localIceCandidates.push(e.candidate);
+                        updated = true;
+                    }
+                }
+                if (updated) {
+                    emitCandidates();
+                }
+            };
+
+            this.rtcConnection.oniceconnectionstatechange = () => {
+                const useTURN = this.rtcConnection!.iceConnectionState === "failed";
+                this.useTURN(useTURN);
+            };
+
+            this.candidateEmissionLoop = setInterval(() => {
+                emitCandidates();
+            }, 10000);
+        }       
+    }
+
+    public useTURN(useTURN: boolean) {
+        if (this._useTURN !== useTURN) {
+            this.emit("p2pState", this, !useTURN);
+        }
+        this._useTURN = useTURN;
+        if(useTURN){
+            LOGGER.warn("Switching to TURN");
+            this.markReady();
+        }
+    }
+
+    private markReady(){
+        if(this.ready)return;
+        this.ready = true;
+        this.emit("ready", this);
     }
 
     public setStatus(status: ConnectionStatus) {
@@ -129,14 +138,18 @@ export class NostrRTCPeer extends EventEmitter<{
         return this.info;
     }
 
+    public getLocalIceCandidates(): RTCIceCandidate[] {
+        return this.localIceCandidates;
+    }
+
     private setDataChannel(channel: RTCDataChannel) {
         this.channel = channel;
 
         if (this.channel.readyState === "open") {
-            this.emit("ready", this);
+            this.markReady();
         } else {
             this.channel.addEventListener("open", () => {
-                this.emit("ready", this);
+                this.markReady();
             });
         }
 
@@ -149,7 +162,11 @@ export class NostrRTCPeer extends EventEmitter<{
         });
     }
 
-    private async initializeConnection(): Promise<RTCSessionDescriptionInit> {
+    public async connect(): Promise<RTCSessionDescriptionInit | undefined> {
+        if(!this.rtcConnection) {
+            this.useTURN(true);
+            return undefined;
+        }
         const channel = this.rtcConnection.createDataChannel(`nostrtc:${this.connectionId}`);
         channel.binaryType = "arraybuffer";
         const offer = await this.rtcConnection.createOffer();
@@ -161,7 +178,11 @@ export class NostrRTCPeer extends EventEmitter<{
         };
     }
 
-    private async openConnection(description: RTCSessionDescriptionInit): Promise<RTCSessionDescriptionInit | undefined> {
+    public async open(description: RTCSessionDescriptionInit): Promise<RTCSessionDescriptionInit | undefined> {
+        if(!this.rtcConnection || !description){
+            this.useTURN(true);
+            return undefined;
+        }
         await this.rtcConnection.setRemoteDescription(new RTCSessionDescription(description));
         const answer = await this.rtcConnection.createAnswer();
         if (!answer) throw new Error("No answer");
@@ -172,7 +193,11 @@ export class NostrRTCPeer extends EventEmitter<{
         };
     }
 
-    public async setRemoteDescription(description: RTCSessionDescriptionInit) {
+    public async setRemoteDescription(description: RTCSessionDescriptionInit|undefined) {
+        if(!this.rtcConnection || !description){
+            this.useTURN(true);
+            return;
+        }
         await this.rtcConnection.setRemoteDescription(new RTCSessionDescription(description));
     }
 
@@ -246,8 +271,12 @@ export class NostrRTCPeer extends EventEmitter<{
         });
     }
 
+    public isTURN(): boolean {
+        return  !!this.turn && this._useTURN;
+    }
+
     public async write(data: Uint8Array) {
-        const useTURN = !!this.turn && this.useTURN;
+        const useTURN = this.isTURN();
         if (useTURN) {
             await this.turn?.write(data);
         } else {

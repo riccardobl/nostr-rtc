@@ -98,9 +98,10 @@ async function start(channelPrivateKey: string, relay: string) {
     rtc.on("connected", async (peer: PeerInfo) => {
         updatePeer(peer, "Connected peer");
         const conn = rtc.getConnection(peer.pubkey);
-        conn?.on("data", (conn, data: Uint8Array) => {
-            console.log("!!! Data received: ", new TextDecoder().decode(data));
-            updatePeer(peer, "!!! Data received: " + new TextDecoder().decode(data));
+        conn!.on("data", (conn, data: Uint8Array) => {
+            const msg ="!!! Data received: " + new TextDecoder().decode(data)+" TURN: "+conn.isTURN();
+            console.log(msg);
+            updatePeer(peer,msg );
         });
         messageInterval = setInterval(async () => {
             console.log("Sending message to ", peer.pubkey);

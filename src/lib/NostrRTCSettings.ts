@@ -2,7 +2,7 @@ export const ANNOUNCE_INTERVAL = 10 * 1000;
 export const PEER_EXPIRATION = 5 * 60 * 1000;
 export const GC_INTERVAL = 60 * 1000;
 export const KIND = 29999;
-export const CONNECTING_TIMEOUT = 10000;
+export const CONNECTING_TIMEOUT = 60000;
 
 export type NostrRTCSettings = {
     ANNOUNCE_INTERVAL: number;

@@ -122,17 +122,17 @@ export class NostrRTC extends EventEmitter<{
     public async start() {
         this.sub = await this.subscribeToSignal(async (sub, payload, peerPubkey, timestamp) => {
             if (payload.announce) {
-                this.onPeerDiscovery(peerPubkey, timestamp, payload.announce).catch(console.error);
-            }
+                await this.onPeerDiscovery(peerPubkey, timestamp, payload.announce).catch(console.error);
+            }          
             if (payload.connect) {
-                this.onIncomingPeerConnection(peerPubkey, payload.connect).catch(console.error);
+                await this.onIncomingPeerConnection(peerPubkey, payload.connect).catch(console.error);
             }
             if (payload.connectAck) {
-                this.onIncomingPeerAck(peerPubkey, payload.connectAck).catch(console.error);
-            }
+                await this.onIncomingPeerAck(peerPubkey, payload.connectAck).catch(console.error);
+            }        
             if (payload.candidates) {
-                this.onIceCandidates(peerPubkey, payload.candidates).catch(console.error);
-            }
+                await this.onIceCandidates(peerPubkey, payload.candidates).catch(console.error);
+            }   
         });
         this.announceLoop().catch(console.error);
         this.gcLoop().catch(console.error);
@@ -190,14 +190,18 @@ export class NostrRTC extends EventEmitter<{
         this.gcTimeout = setTimeout(() => this.gcLoop(), this.settings.GC_INTERVAL);
     }
 
+    private getAnnounce(): any{
+        return {
+            metadata: this.metadata,
+            turnRelays: this.turnRelays,
+        }
+    }
+
     private async announceLoop() {
         if (this.stopped) return;
         try {
             await this.signal({
-                announce: {
-                    metadata: this.metadata,
-                    turnRelays: this.turnRelays,
-                },
+                announce: this.getAnnounce()
             });
         } catch (e) {
             console.error("Failed to announce", e);
@@ -215,8 +219,8 @@ export class NostrRTC extends EventEmitter<{
         // initialize connection
         let connection = this.connections.get(pubkey);
         if (connection) throw new Error("Peer already connected or connecting");
-        let description;
-        ({ connection, description } = await NostrRTCPeer.connect(discoveredPeer));
+        connection = new NostrRTCPeer(discoveredPeer);
+
         if (discoveredPeer.turnRelays?.length) {
             const turn = new NostrTURN(this.nostr, connection.getConnectionId(), this.localKeyPair, discoveredPeer, this.turnSettings);
             turn.on("close", (msg) => {
@@ -239,8 +243,9 @@ export class NostrRTC extends EventEmitter<{
         });
 
         connection.on("candidates", (conn, candidates: RTCIceCandidate[]) => {
-            const serialized = candidates.map((c) => c.toJSON());
-            this.signal({ candidates: serialized }, discoveredPeer.pubkey).catch(console.error);
+            this.signal({ 
+                candidates: candidates.map((c) => c.toJSON())
+             }, discoveredPeer.pubkey).catch(console.error);
         });
 
         connection.on("data", (conn, data) => {
@@ -253,9 +258,12 @@ export class NostrRTC extends EventEmitter<{
         // signal connection request
         const connectionId = connection.getConnectionId();
         this.emit("connecting", discoveredPeer);
+        const description = await connection.connect();
         LOGGER.debug("Attempting to connect to", pubkey + "@" + connectionId, "and local description", description);
         await this.signal(
             {
+                announce: this.getAnnounce(),
+                candidates: connection.getLocalIceCandidates().map((c) => c.toJSON()),
                 connect: {
                     connectionId,
                     description,
@@ -267,9 +275,9 @@ export class NostrRTC extends EventEmitter<{
 
     private async onIceCandidates(pubkey: string, candidates: any) {
         const peer = this.discoveredPeers.find((peer) => peer.pubkey === pubkey);
-        if (!peer) throw new Error("Peer not discovered yet");
+        if (!peer) return;
         const connection = this.connections.get(pubkey);
-        if (!connection) throw new Error("Peer connection not found");
+        if (!connection) return;
         await connection.addRemoteIceCandidates(candidates.map((c: any) => new RTCIceCandidate(c)));
         this.emit("candidates", peer, candidates);
     }
@@ -315,6 +323,9 @@ export class NostrRTC extends EventEmitter<{
             LOGGER.error("Failed to connect", e);
             connection.close(e).catch(console.error);
         }
+        this.signal({ 
+            candidates:  connection.getLocalIceCandidates().map((c) => c.toJSON())
+        }, peerPubkey).catch(console.error);
     }
 
     private async onIncomingPeerConnection(peerPubkey: string, payload: any) {
@@ -325,10 +336,10 @@ export class NostrRTC extends EventEmitter<{
         const remotePeer = this.discoveredPeers.find((peer) => peer.pubkey === peerPubkey);
         if (!remotePeer) throw new Error("Peer not discovered yet");
         let connection: NostrRTCPeer | undefined;
-        let description: RTCSessionDescriptionInit | undefined;
         try {
             // initialize and register connection
-            ({ connection, description } = await NostrRTCPeer.open(remotePeer, connectionId, remoteDescription));
+            connection =  new NostrRTCPeer(remotePeer, connectionId);
+            // ({ connection, description } = await NostrRTCPeer.open(remotePeer, connectionId, remoteDescription));
             if (remotePeer.turnRelays?.length) {
                 const turn = new NostrTURN(this.nostr, connection.getConnectionId(), this.localKeyPair, remotePeer, this.turnSettings);
                 turn.on("close", (msg) => {
@@ -336,6 +347,9 @@ export class NostrRTC extends EventEmitter<{
                 });
                 connection.setTURN(turn);
             }
+
+           
+
             this.connections.set(peerPubkey, connection);
             // register hooks
             connection.on("ready", () => {
@@ -357,12 +371,17 @@ export class NostrRTC extends EventEmitter<{
             connection.on("data", (conn, data) => {
                 this.emit("data", remotePeer, data);
             });
+            
+            const description = await connection.open(remoteDescription);
 
             LOGGER.debug("Confirm connection to", peerPubkey + "@" + connectionId, "with local description", description);
-            this.emit("connecting", remotePeer);
+            this.emit("connecting", remotePeer);     
+                
             // signal connection ack
             await this.signal(
                 {
+                    // announce: this.getAnnounce(),
+                    candidates: connection.getLocalIceCandidates().map((c) => c.toJSON()),
                     connectAck: {
                         connectionId,
                         description,
