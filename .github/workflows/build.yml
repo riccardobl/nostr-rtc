@@ -51,7 +51,7 @@ jobs:
         path: dist/www/test1
 
   build-gh-pages:
-    if: github.event_name == 'release' 
+    # if: github.event_name == 'release' 
     runs-on: ubuntu-latest
     
     steps:
