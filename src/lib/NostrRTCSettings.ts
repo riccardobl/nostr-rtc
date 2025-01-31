@@ -4,7 +4,18 @@ export const GC_INTERVAL = 60 * 1000;
 export const KIND = 29999;
 export const CONNECTING_TIMEOUT = 2*60*1000;
 export const STUN_SERVERS = [
- 
+    "stun:stun.cloudflare.com:3478",
+    "stun:stun.l.google.com:19302",
+    "stun:stun.l.google.com:5349" ,
+    "stun:stun1.l.google.com:3478" ,
+    "stun:stun1.l.google.com:5349" ,
+    "stun:stun2.l.google.com:19302" ,
+    "stun:stun2.l.google.com:5349" ,
+    "stun:stun3.l.google.com:3478" ,
+    "stun:stun3.l.google.com:5349" ,
+    "stun:stun4.l.google.com:19302" ,
+    "stun:stun4.l.google.com:5349" ,
+    "stun:stunserver2024.stunprotocol.org:3478"
 ];
 
 export type NostrRTCSettings = {
