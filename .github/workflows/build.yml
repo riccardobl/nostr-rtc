@@ -58,7 +58,7 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v3
       with:
-        ref: gh-pages
+        depth: 1
     
     - name: Set up Node.js
       uses: actions/setup-node@v3
@@ -74,9 +74,15 @@ jobs:
     - name: Build bundle
       run: npm run build:bundle:lib
     
+    - name: Upload  artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: www.zip
+        path: dist/www
+
     - name: Deploy to GitHub Pages
       uses: peaceiris/actions-gh-pages@v3
       with:
         target_branch: gh-pages  
-        source_dir: dist/www 
+        publish_dir: dist/www 
         personal_token: ${{ secrets.GITHUB_TOKEN }}  
