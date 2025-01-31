@@ -27,7 +27,7 @@ jobs:
       run: npm run build:lib:zip
     
     - name: Upload lib zip as artifact
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: nostr-rtc.zip
         path: dist/nostr-rtc.zip
@@ -39,13 +39,13 @@ jobs:
       run: npm run build:bundle:lib
 
     - name: Upload bundle as artifact
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: nostr-rtc-bundle.zip
         path: dist/www/bundle
 
     - name: Upload test1 as artifact
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: nostr-rtc-test1.zip
         path: dist/www/test1
