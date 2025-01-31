@@ -3,6 +3,7 @@ export const PEER_EXPIRATION = 5 * 60 * 1000;
 export const GC_INTERVAL = 60 * 1000;
 export const KIND = 29999;
 export const CONNECTING_TIMEOUT = 2*60*1000;
+export const P2P_TIMEOUT = 60*1000;
 export const STUN_SERVERS = [
     "stun:stun.cloudflare.com:3478",
     "stun:stun.l.google.com:19302",
@@ -25,6 +26,7 @@ export type NostrRTCSettings = {
     KIND: number;
     CONNECTING_TIMEOUT: number;
     STUN_SERVERS: string[];
+    P2P_TIMEOUT: number;
 };
 
 export default {
@@ -33,5 +35,6 @@ export default {
     GC_INTERVAL,
     KIND,
     CONNECTING_TIMEOUT,
-    STUN_SERVERS
+    STUN_SERVERS,
+    P2P_TIMEOUT
 } as NostrRTCSettings;

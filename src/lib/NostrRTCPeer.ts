@@ -30,7 +30,7 @@ export class NostrRTCPeer extends EventEmitter<{
     private readonly info: PeerInfo;
     private readonly settings: NostrRTCSettings;
 
-    private channel?: RTCDataChannel;
+    private channel?: Promise<RTCDataChannel>;
     private stopped?: boolean;
 
     private status: ConnectionStatus;
@@ -41,6 +41,7 @@ export class NostrRTCPeer extends EventEmitter<{
     private isChannelReady: boolean = false;
     private _useTURN: boolean = false;
     private ready: boolean = false;
+    private turn?: NostrTURN;
 
 
     constructor(info: PeerInfo, connectionId?: string, settings: NostrRTCSettings = DefaultNostrRTCSettings) {
@@ -53,21 +54,22 @@ export class NostrRTCPeer extends EventEmitter<{
 
         this.on("ready", async () => {
             this.setStatus(ConnectionStatus.connected);
-            if(!this._useTURN){
-                const channel = await this.getChannel();
-                channel.binaryType = "arraybuffer";
-                channel.addEventListener("message", (e) => {
-                    const data: Uint8Array = e.data;
-                    this.emit("data", this, data);
-                });
-            }
         });
 
-        if(typeof RTCPeerConnection === "function"){        
+        if(typeof RTCPeerConnection === "function"){       
+            const switchTOTurn = setTimeout(() => {
+                this.useTURN(true);
+            }, settings.P2P_TIMEOUT);
+
             this.rtcConnection = new RTCPeerConnection({ iceServers: settings.STUN_SERVERS.map(s=>({urls:s})) });
-            this.rtcConnection.ondatachannel = (e) => {
-                this.setDataChannel(e.channel);
-            };
+            this.channel = new Promise((resolve) => {
+                this.rtcConnection!.ondatachannel = (e) => {
+                    const channel = e.channel;
+                    this.initDataChannel(e.channel);
+                    clearTimeout(switchTOTurn);
+                    resolve(channel);
+                };
+            });
 
             const emitCandidates = () => {
                 if (this.candidateEmissionTimeout) clearTimeout(this.candidateEmissionTimeout);
@@ -109,6 +111,8 @@ export class NostrRTCPeer extends EventEmitter<{
         if(useTURN){
             LOGGER.warn("Switching to TURN");
             this.markReady();
+        } else {
+            LOGGER.info("Switching to P2P");
         }
     }
 
@@ -142,24 +146,30 @@ export class NostrRTCPeer extends EventEmitter<{
         return this.localIceCandidates;
     }
 
-    private setDataChannel(channel: RTCDataChannel) {
-        this.channel = channel;
-
-        if (this.channel.readyState === "open") {
-            this.markReady();
-        } else {
-            this.channel.addEventListener("open", () => {
-                this.markReady();
+    private initDataChannel(channel: RTCDataChannel) {
+        const onOpen = () =>{
+            channel.binaryType = "arraybuffer";
+            channel.addEventListener("message", (e) => {
+                const data: Uint8Array = e.data;
+                this.emit("data", this, data);
             });
-        }
+            this.markReady();
+            channel.removeEventListener("open", onOpen);
+        };
 
-        this.channel.addEventListener("close", () => {
+        channel.addEventListener("close", () => {
             this.emit("close", this);
         });
 
-        this.channel.addEventListener("error", (e: RTCErrorEvent) => {
+        channel.addEventListener("error", (e: RTCErrorEvent) => {
             this.emit("error", this, e.error);
         });
+
+        if (channel.readyState === "open") {
+            onOpen();
+        } else {
+            channel.addEventListener("open", onOpen);
+        }
     }
 
     public async connect(): Promise<RTCSessionDescriptionInit | undefined> {
@@ -167,12 +177,13 @@ export class NostrRTCPeer extends EventEmitter<{
             this.useTURN(true);
             return undefined;
         }
-        if(this.isTURN())return;
-        const channel = this.rtcConnection.createDataChannel(`nostrtc:${this.connectionId}`);
-        channel.binaryType = "arraybuffer";
+        const channel = this.rtcConnection.createDataChannel(`nostr_rtc:${this.connectionId}`);
+        this.initDataChannel(channel);
+        this.channel = Promise.resolve(channel);
+
         const offer = await this.rtcConnection.createOffer();
         await this.rtcConnection?.setLocalDescription(offer);
-        this.setDataChannel(channel);
+        
         return {
             sdp: offer.sdp,
             type: offer.type,
@@ -184,7 +195,6 @@ export class NostrRTCPeer extends EventEmitter<{
             this.useTURN(true);
             return undefined;
         }
-        if(this.isTURN())return;
         await this.rtcConnection.setRemoteDescription(new RTCSessionDescription(description));
         const answer = await this.rtcConnection.createAnswer();
         if (!answer) throw new Error("No answer");
@@ -200,12 +210,11 @@ export class NostrRTCPeer extends EventEmitter<{
             this.useTURN(true);
             return;
         }
-        if(this.isTURN())return;
         await this.rtcConnection.setRemoteDescription(new RTCSessionDescription(description));
     }
 
     public async addRemoteIceCandidates(candidates: RTCIceCandidate[]) {
-        if(!this.rtcConnection || this.isTURN()) return;
+        if(!this.rtcConnection) return;
         for (const candidate of candidates) {
             await this.rtcConnection?.addIceCandidate(candidate);
         }
@@ -213,9 +222,10 @@ export class NostrRTCPeer extends EventEmitter<{
 
     public async close(msg?: Error | string) {
         if (this.stopped) return;
+        const channel = await this.channel;
         this.stopped = true;
-        if (this.channel) {
-            this.channel.close();
+        if (channel) {
+            channel.close();
         }
         if (this.rtcConnection) {
             this.rtcConnection.close();
@@ -234,10 +244,8 @@ export class NostrRTCPeer extends EventEmitter<{
 
     private async getChannel(): Promise<RTCDataChannel> {
         if (!this.channel) throw new Error("No channel");
-        if(this.isTURN()) throw new Error("TURN connection doesn't have an rtc channel");
-        const channel = this.channel;
+        const channel = await this.channel;
 
-        // check if open
         if (channel.readyState !== "open") {
             await new Promise((resolve, reject) => {
                 const onOpen = () => {
@@ -268,7 +276,6 @@ export class NostrRTCPeer extends EventEmitter<{
         return channel;
     }
 
-    private turn?: NostrTURN;
     public setTURN(turn: NostrTURN) {
         this.turn = turn;
         this.turn.on("data", (peer: PeerInfo, data: Uint8Array) => {
