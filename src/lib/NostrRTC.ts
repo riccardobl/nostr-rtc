@@ -3,7 +3,7 @@ import { EventEmitter } from "tseep";
 import { getLogger } from "./logger";
 import { NostrRTCPeer, ConnectionStatus } from "./NostrRTCPeer";
 import { NostrTURN } from "./NostrTURN";
-import DefaultSettings, { NostrRTCSettings } from "./NostrRTCSettings";
+import DefaultSettings, { NostrRTCSettings, PUBLIC_STUN_SERVERS } from "./NostrRTCSettings";
 import DefaultTURNSettings, { NostrTURNSettings } from "./NostrTURNSettings";
 
 const LOGGER = getLogger("nostrtc:NostrRTC");
@@ -41,6 +41,18 @@ export class PeerInfo {
     }
 }
 
+
+export type NostrRTCOptions = {
+    stunServers?: string[];
+    turnRelays?: string[];
+    localKey?: string | NostrKeyPair;
+    rtcSettings: NostrRTCSettings;
+    turnSettings: NostrTURNSettings;
+    useRelaysTurn: boolean;
+    useRelaysStun: boolean;
+};
+
+
 export class NostrRTC extends EventEmitter<{
     discover: (peer: PeerInfo) => void;
     close: (peer: PeerInfo, msg?: string | Error) => void;
@@ -61,10 +73,13 @@ export class NostrRTC extends EventEmitter<{
     private readonly localKeyPair: NostrKeyPair;
     private readonly nostr: NostrAdapter;
     private readonly metadata: { [key: string]: string };
-    private readonly settings: NostrRTCSettings;
-    private readonly turnSettings: NostrTURNSettings;
+    private readonly config: NostrRTCOptions;
+    
 
-    private turnRelays?: string[];
+    private readonly turnRelays: string[];
+    private readonly signalingRelays: string[];
+    private readonly stunServers: string[];
+
     private sub?: NostrSubscription;
     private stopped: boolean = false;
     private announceTimeout?: any;
@@ -72,22 +87,27 @@ export class NostrRTC extends EventEmitter<{
     private autoconnectTimeout?: any;
 
     constructor(
-        channelKey: string | NostrKeyPair,
         nostr: NostrAdapter,
+        signalingRelays: string[],
+        channelKey: string | NostrKeyPair,
         metadata: { [key: string]: string } = {},
-        turnRelays?: string[],
-        localKey?: string | NostrKeyPair,
-        settings: NostrRTCSettings = DefaultSettings,
-        turnSettings: NostrTURNSettings = DefaultTURNSettings,
+        opts: NostrRTCOptions = {
+            rtcSettings: DefaultSettings,
+            turnSettings: DefaultTURNSettings,
+            useRelaysTurn: true,
+            useRelaysStun: true,
+        },
     ) {
         super();
         this.nostr = nostr;
         this.channelKeyPair = typeof channelKey === "string" ? nostr.newKeyPair(channelKey) : channelKey;
-        this.localKeyPair = typeof localKey === "string" || !localKey ? nostr.newKeyPair(localKey) : localKey;
+        this.localKeyPair = typeof opts.localKey === "string" || !opts.localKey ? nostr.newKeyPair(opts.localKey) : opts.localKey;
         this.metadata = metadata;
-        this.settings = settings;
-        this.turnSettings = turnSettings;
-        this.turnRelays = turnRelays;
+        this.config = opts;
+
+        this.signalingRelays = [...(signalingRelays ?? [])];
+        this.turnRelays = [...(opts.turnRelays ?? [])];
+        this.stunServers = [...(opts.stunServers ?? [])];
     }
 
     public setMetadata(metadata: { [key: string]: string }) {
@@ -95,16 +115,20 @@ export class NostrRTC extends EventEmitter<{
         Object.assign(this.metadata, metadata);
     }
 
-    public setTurnRelays(turnRelays: string[]) {
-        this.turnRelays = turnRelays;
-    }
-
     public getMetadata(): { [key: string]: string } {
         return this.metadata;
     }
 
-    public getTurnRelays(): string[] | undefined {
+    public getTurnRelays(): string[] {
         return this.turnRelays;
+    }
+
+    public getStunServers(): string[] {
+        return this.stunServers;
+    }
+
+    public getSignalingRelays(): string[] {
+        return this.signalingRelays;
     }
 
     public getChannelKeyPair(): NostrKeyPair {
@@ -123,17 +147,38 @@ export class NostrRTC extends EventEmitter<{
         this.sub = await this.subscribeToSignal(async (sub, payload, peerPubkey, timestamp) => {
             if (payload.announce) {
                 await this.onPeerDiscovery(peerPubkey, timestamp, payload.announce).catch(console.error);
-            }          
+            }
             if (payload.connect) {
                 await this.onIncomingPeerConnection(peerPubkey, payload.connect).catch(console.error);
             }
             if (payload.connectAck) {
                 await this.onIncomingPeerAck(peerPubkey, payload.connectAck).catch(console.error);
-            }        
+            }
             if (payload.candidates) {
                 await this.onIceCandidates(peerPubkey, payload.candidates).catch(console.error);
-            }   
+            }
         });
+
+        // load more turn and stun servers from nip-11 info
+        for (const relay of this.signalingRelays) {
+            const info = await this.nostr.getInfo(relay);
+            if(this.config.useRelaysStun){
+                if (info?.stun?.length) {
+                    this.stunServers.push(...info.stun);
+                }
+            }
+
+            if(this.config.useRelaysTurn){
+                if (info?.turn?.length) {
+                    this.turnRelays.push(...info.turn);
+                }
+            }
+        }
+
+       
+
+        LOGGER.info("Starting NostrRTC with\n    signaling:", this.signalingRelays, "\n    turn:", this.turnRelays, "\n    stun:", this.stunServers);
+
         this.announceLoop().catch(console.error);
         this.gcLoop().catch(console.error);
         this.autoconnectLoop().catch(console.error);
@@ -166,7 +211,7 @@ export class NostrRTC extends EventEmitter<{
         for (let i = 0; i < this.discoveredPeers.length; i++) {
             // remove expired peers
             const peer = this.discoveredPeers[i];
-            if (now - peer.lastSeen > this.settings.PEER_EXPIRATION) {
+            if (now - peer.lastSeen > this.config.rtcSettings.peerExpiration) {
                 this.discoveredPeers.splice(i, 1);
                 i--;
                 this.emit("cleanup", peer);
@@ -187,26 +232,26 @@ export class NostrRTC extends EventEmitter<{
                 this.connections.delete(pubkey);
             }
         }
-        this.gcTimeout = setTimeout(() => this.gcLoop(), this.settings.GC_INTERVAL);
+        this.gcTimeout = setTimeout(() => this.gcLoop(), this.config.rtcSettings.gcInterval);
     }
 
-    private getAnnounce(): any{
+    private getAnnounce(): any {
         return {
             metadata: this.metadata,
             turnRelays: this.turnRelays,
-        }
+        };
     }
 
     private async announceLoop() {
         if (this.stopped) return;
         try {
             await this.signal({
-                announce: this.getAnnounce()
+                announce: this.getAnnounce(),
             });
         } catch (e) {
             console.error("Failed to announce", e);
         }
-        this.announceTimeout = setTimeout(() => this.announceLoop(), this.settings.ANNOUNCE_INTERVAL);
+        this.announceTimeout = setTimeout(() => this.announceLoop(), this.config.rtcSettings.announceInterval);
     }
 
     public async connect(pubkey: string): Promise<void> {
@@ -219,10 +264,10 @@ export class NostrRTC extends EventEmitter<{
         // initialize connection
         let connection = this.connections.get(pubkey);
         if (connection) throw new Error("Peer already connected or connecting");
-        connection = new NostrRTCPeer(discoveredPeer);
+        connection = new NostrRTCPeer(discoveredPeer, this.stunServers);
 
         if (discoveredPeer.turnRelays?.length) {
-            const turn = new NostrTURN(this.nostr, connection.getConnectionId(), this.localKeyPair, discoveredPeer, this.turnSettings);
+            const turn = new NostrTURN(this.nostr, connection.getConnectionId(), this.localKeyPair, discoveredPeer, this.config.turnSettings);
             turn.on("close", (msg) => {
                 connection.close(new Error("Closed by TURN: " + msg)).catch(console.error);
             });
@@ -243,9 +288,12 @@ export class NostrRTC extends EventEmitter<{
         });
 
         connection.on("candidates", (conn, candidates: RTCIceCandidate[]) => {
-            this.signal({ 
-                candidates: candidates.map((c) => c.toJSON())
-             }, discoveredPeer.pubkey).catch(console.error);
+            this.signal(
+                {
+                    candidates: candidates.map((c) => c.toJSON()),
+                },
+                discoveredPeer.pubkey,
+            ).catch(console.error);
         });
 
         connection.on("data", (conn, data) => {
@@ -285,7 +333,7 @@ export class NostrRTC extends EventEmitter<{
     private async onPeerDiscovery(pubkey: string, timestamp: number, announce: any) {
         const metadata: { [key: string]: string } | undefined = announce.metadata;
         const turnRelays: string[] | undefined = announce.turnRelays;
-        if (Date.now() - timestamp > this.settings.PEER_EXPIRATION) return;
+        if (Date.now() - timestamp > this.config.rtcSettings.peerExpiration) return;
         if (this.banlist.includes(pubkey)) return;
         let peer = this.discoveredPeers.find((peer) => peer.pubkey === pubkey);
         if (!peer) {
@@ -323,9 +371,12 @@ export class NostrRTC extends EventEmitter<{
             LOGGER.error("Failed to connect", e);
             connection.close(e).catch(console.error);
         }
-        this.signal({ 
-            candidates:  connection.getLocalIceCandidates().map((c) => c.toJSON())
-        }, peerPubkey).catch(console.error);
+        this.signal(
+            {
+                candidates: connection.getLocalIceCandidates().map((c) => c.toJSON()),
+            },
+            peerPubkey,
+        ).catch(console.error);
     }
 
     private async onIncomingPeerConnection(peerPubkey: string, payload: any) {
@@ -338,17 +389,15 @@ export class NostrRTC extends EventEmitter<{
         let connection: NostrRTCPeer | undefined;
         try {
             // initialize and register connection
-            connection =  new NostrRTCPeer(remotePeer, connectionId);
+            connection = new NostrRTCPeer(remotePeer, connectionId);
             // ({ connection, description } = await NostrRTCPeer.open(remotePeer, connectionId, remoteDescription));
             if (remotePeer.turnRelays?.length) {
-                const turn = new NostrTURN(this.nostr, connection.getConnectionId(), this.localKeyPair, remotePeer, this.turnSettings);
+                const turn = new NostrTURN(this.nostr, connection.getConnectionId(), this.localKeyPair, remotePeer, this.config.turnSettings);
                 turn.on("close", (msg) => {
                     if (connection) connection.close(new Error("Closed by TURN: " + msg)).catch(console.error);
                 });
                 connection.setTURN(turn);
             }
-
-           
 
             this.connections.set(peerPubkey, connection);
             // register hooks
@@ -371,12 +420,12 @@ export class NostrRTC extends EventEmitter<{
             connection.on("data", (conn, data) => {
                 this.emit("data", remotePeer, data);
             });
-            
+
             const description = await connection.open(remoteDescription);
 
             LOGGER.debug("Confirm connection to", peerPubkey + "@" + connectionId, "with local description", description);
-            this.emit("connecting", remotePeer);     
-                
+            this.emit("connecting", remotePeer);
+
             // signal connection ack
             await this.signal(
                 {
@@ -475,8 +524,9 @@ export class NostrRTC extends EventEmitter<{
 
             const encryptedPayload = await this.nostr.encrypt(peerPubkey ?? (await this.channelKeyPair.getPubKey()), JSON.stringify(payload), this.localKeyPair);
             await this.nostr.publishToRelays(
+                this.signalingRelays,
                 {
-                    kind: this.settings.KIND,
+                    kind: this.config.rtcSettings.kind,
                     content: encryptedPayload,
                     tags: [
                         ["d", d],
@@ -495,9 +545,10 @@ export class NostrRTC extends EventEmitter<{
         const pubChannel = `@@${await this.channelKeyPair.getPubKey()}`;
 
         const sub: NostrSubscription = await this.nostr.subscribeToRelays(
+            this.signalingRelays,
             [
                 {
-                    kinds: [this.settings.KIND],
+                    kinds: [this.config.rtcSettings.kind],
                     "#d": [privChannel, pubChannel],
                     since: Math.floor(Date.now() / 1000),
                 },

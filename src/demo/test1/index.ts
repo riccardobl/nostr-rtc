@@ -40,9 +40,9 @@ async function start(channelPrivateKey: string, relay: string) {
     const ndk = new NDK({
         explicitRelayUrls: relays,
     });
-    const nostr = new NDKAdapter(ndk, NDKRelaySet.fromRelayUrls(relays, ndk));
+    const nostr = new NDKAdapter(ndk);
 
-    const rtc = new NostrRTC(channelPrivateKey, nostr, {}, relays, localUser.privateKey);
+    const rtc = new NostrRTC(nostr, relays, channelPrivateKey, {});
 
     const updatePeer = (peer: PeerInfo, log: string, candidates?: any) => {
         const pubkey = peer.pubkey;
@@ -99,9 +99,9 @@ async function start(channelPrivateKey: string, relay: string) {
         updatePeer(peer, "Connected peer");
         const conn = rtc.getConnection(peer.pubkey);
         conn!.on("data", (conn, data: Uint8Array) => {
-            const msg ="!!! Data received: " + new TextDecoder().decode(data)+" TURN: "+conn.isTURN();
+            const msg = "!!! Data received: " + new TextDecoder().decode(data) + " TURN: " + conn.isTURN();
             console.log(msg);
-            updatePeer(peer,msg );
+            updatePeer(peer, msg);
         });
         messageInterval = setInterval(async () => {
             console.log("Sending message to ", peer.pubkey);

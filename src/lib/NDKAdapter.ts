@@ -6,12 +6,21 @@ const LOGGER = getLogger("nostrtc:NDKAdapter");
 
 export class NDKAdapter implements NostrAdapter {
     private readonly ndk: NDK;
-    private readonly relaySet: NDKRelaySet;
     private signers: WeakMap<NostrKeyPair, NDKPrivateKeySigner> = new WeakMap();
 
-    constructor(ndk: NDK, relaySet: NDKRelaySet) {
+    constructor(ndk: NDK) {
         this.ndk = ndk;
-        this.relaySet = relaySet;
+    }
+
+    public async getInfo(relayUrl: string): Promise<{ [key: string]: string }> {
+        const httpRelayUrl = relayUrl.startsWith("wss://") ? "https://" + relayUrl.substring(6) : relayUrl.startsWith("ws://") ? "http://" + relayUrl.substring(5) : relayUrl;
+
+        const res = await fetch(httpRelayUrl + "/", {
+            headers: {
+                Accept: "application/nostr+json",
+            },
+        }).then((res) => res.json());
+        return res;
     }
 
     private async getSigner(keyPair: NostrKeyPair): Promise<NDKPrivateKeySigner> {
@@ -21,7 +30,7 @@ export class NDKAdapter implements NostrAdapter {
         return this.signers.get(keyPair)!;
     }
 
-    public async publishToRelays(eventTemplate: NostrEvent, signerKeyPair: NostrKeyPair, relays?: string[]): Promise<SignedNostrEvent> {
+    public async publishToRelays(relays: string[], eventTemplate: NostrEvent, signerKeyPair: NostrKeyPair): Promise<SignedNostrEvent> {
         const ndkEventTemplate: any = {
             created_at: eventTemplate.created_at || Math.floor(Date.now() / 1000),
             content: eventTemplate.content,
@@ -33,7 +42,7 @@ export class NDKAdapter implements NostrAdapter {
         const event = new NDKEvent(this.ndk, ndkEventTemplate);
         await event.sign(signer);
         if (!event.sig || !event.pubkey || !event.content || !event.created_at || !event.kind) throw new Error("Failed to sign event");
-        const relaySet = relays ? NDKRelaySet.fromRelayUrls(relays, this.ndk) : this.relaySet;
+        const relaySet = NDKRelaySet.fromRelayUrls(relays, this.ndk);
         const rs = await relaySet.publish(event);
         const signedEvent: SignedNostrEvent = {
             id: event.id,
@@ -50,13 +59,18 @@ export class NDKAdapter implements NostrAdapter {
     }
 
     public async subscribeToRelays(
+        relays: string[],
         filters: NostrFilter[],
         onEvent: (sub: NostrSubscription, event: SignedNostrEvent) => Promise<void>,
         onClose?: (sub: NostrSubscription) => Promise<void>,
         onEose?: (sub: NostrSubscription) => Promise<void>,
-        relays?: string[],
     ): Promise<NostrSubscription> {
-        const relaySet = relays ? NDKRelaySet.fromRelayUrls(relays, this.ndk) : this.relaySet;
+        const relaySet = NDKRelaySet.fromRelayUrls(relays, this.ndk);
+
+        // workaround https://github.com/nostr-dev-kit/ndk/issues/303
+        for (const relay of relaySet.relays) {
+            await this.ndk.addExplicitRelay(relay);
+        }
 
         const ndkFilters: NDKFilter[] = filters.map((f: NostrFilter) => {
             const ndkFilter: NDKFilter = {

@@ -5,17 +5,17 @@ export const LOOP_INTERVAL = 1;
 export const TURN_KIND = 29999;
 
 export type NostrTURNSettings = {
-    CHUNK_LENGTH: number;
-    PACKET_TIMEOUT: number;
-    MAX_LATENCY: number;
-    LOOP_INTERVAL: number;
-    TURN_KIND: number;
+    chunkLength: number;
+    packetTimeout: number;
+    maxLatency: number;
+    loopInterval: number;
+    kind: number;
 };
 
 export default {
-    CHUNK_LENGTH,
-    PACKET_TIMEOUT,
-    MAX_LATENCY,
-    LOOP_INTERVAL,
-    TURN_KIND,
+    chunkLength: CHUNK_LENGTH,
+    packetTimeout: PACKET_TIMEOUT,
+    maxLatency: MAX_LATENCY,
+    loopInterval: LOOP_INTERVAL,
+    kind: TURN_KIND,
 } as NostrTURNSettings;

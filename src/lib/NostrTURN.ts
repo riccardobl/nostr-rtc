@@ -51,10 +51,11 @@ export class NostrTURN extends EventEmitter<{
         this.localPeer = localKeyPair;
         this.remotePeer = remotePeer;
         this.turn = nostr.subscribeToRelays(
+            this.remotePeer.turnRelays!,
             [
                 {
                     authors: [this.remotePeer.pubkey],
-                    kinds: [this.config.TURN_KIND],
+                    kinds: [this.config.kind],
                     "#d": ["turn-" + this.connectionId],
                 },
             ],
@@ -72,7 +73,6 @@ export class NostrTURN extends EventEmitter<{
             },
             undefined,
             undefined,
-            this.remotePeer.turnRelays,
         );
 
         this.loop().catch((e) => {
@@ -96,7 +96,7 @@ export class NostrTURN extends EventEmitter<{
         await this.turn;
         const b64data = base64.encode(pako.deflate(data));
         const packetId = this.packetCounter++;
-        const chunkLen = this.config.CHUNK_LENGTH;
+        const chunkLen = this.config.chunkLength;
         const chunkCount = Math.ceil(b64data.length / chunkLen);
         LOGGER.trace("Splitting packet", packetId, "in", chunkCount, "chunks");
 
@@ -191,16 +191,16 @@ export class NostrTURN extends EventEmitter<{
         });
         ack = await this.nostr.encrypt(this.remotePeer.pubkey, ack, this.localPeer);
         await this.nostr.publishToRelays(
+            this.remotePeer.turnRelays!,
             {
                 content: ack,
                 tags: [
                     ["d", "turn-" + this.connectionId],
-                    ["expiration", String(Math.floor((Date.now() + this.config.PACKET_TIMEOUT) / 1000))], // 2 minutes
+                    ["expiration", String(Math.floor((Date.now() + this.config.packetTimeout) / 1000))], // 2 minutes
                 ],
-                kind: this.config.TURN_KIND,
+                kind: this.config.kind,
             },
             this.localPeer,
-            this.remotePeer.turnRelays,
         );
     }
 
@@ -214,7 +214,7 @@ export class NostrTURN extends EventEmitter<{
                 LOGGER.trace("Reassembling packet", packet.id, "from", packet.chunks.length, "chunks");
                 this.emit("data", this.remotePeer, decoded);
                 this.inPacket = undefined;
-            } else if (Date.now() - packet.timestamp > this.config.PACKET_TIMEOUT) {
+            } else if (Date.now() - packet.timestamp > this.config.packetTimeout) {
                 this.close(new Error("Timeout")).catch((e) => LOGGER.error("Error closing", e));
             }
         }
@@ -225,7 +225,7 @@ export class NostrTURN extends EventEmitter<{
             if (packet.sent && packet.sent === packet.ack) {
                 LOGGER.trace("Packet", packet.id, "fully acked", packet.ack, "/", packet.sent);
                 delete this.outQueue[packetId];
-            } else if (Date.now() - packet.timestamp > this.config.PACKET_TIMEOUT) {
+            } else if (Date.now() - packet.timestamp > this.config.packetTimeout) {
                 this.close(new Error("Timeout")).catch((e) => LOGGER.error("Error closing", e));
             }
         }
@@ -248,7 +248,7 @@ export class NostrTURN extends EventEmitter<{
                     const lastAttempt = chunk.lastAttempt;
 
                     // skip chunk if not acked but still likely to be in transit
-                    if (Date.now() - lastAttempt < (this.config.MAX_LATENCY ?? 1000)) {
+                    if (Date.now() - lastAttempt < (this.config.maxLatency ?? 1000)) {
                         continue;
                     }
 
@@ -280,16 +280,16 @@ export class NostrTURN extends EventEmitter<{
                     LOGGER.trace("Sending chunk", nextPacket.id, i);
                     // send
                     await this.nostr.publishToRelays(
+                        this.remotePeer.turnRelays!,
                         {
                             content,
                             tags: [
                                 ["d", "turn-" + this.connectionId],
-                                ["expiration", String(Math.floor((Date.now() + this.config.PACKET_TIMEOUT) / 1000))], // 2 minutes
+                                ["expiration", String(Math.floor((Date.now() + this.config.packetTimeout) / 1000))], // 2 minutes
                             ],
-                            kind: this.config.TURN_KIND,
+                            kind: this.config.kind,
                         },
                         this.localPeer,
-                        this.remotePeer.turnRelays,
                     );
                 }
             }
@@ -301,6 +301,6 @@ export class NostrTURN extends EventEmitter<{
             this.loop().catch((e) => {
                 LOGGER.error("Error in turn loop", e);
             });
-        }, this.config.LOOP_INTERVAL);
+        }, this.config.loopInterval);
     }
 }

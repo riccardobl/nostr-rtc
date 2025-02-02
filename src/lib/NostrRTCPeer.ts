@@ -43,25 +43,23 @@ export class NostrRTCPeer extends EventEmitter<{
     private ready: boolean = false;
     private turn?: NostrTURN;
 
-
-    constructor(info: PeerInfo, connectionId?: string, settings: NostrRTCSettings = DefaultNostrRTCSettings) {
+    constructor(info: PeerInfo, stunServers: string[], connectionId?: string, settings: NostrRTCSettings = DefaultNostrRTCSettings) {
         super();
         this.connectionId = connectionId ?? uuidv7();
         this.info = info;
         this.settings = settings;
         this.status = ConnectionStatus.connecting;
 
-
         this.on("ready", async () => {
             this.setStatus(ConnectionStatus.connected);
         });
 
-        if(typeof RTCPeerConnection === "function"){       
+        if (typeof RTCPeerConnection === "function") {
             const switchTOTurn = setTimeout(() => {
                 this.useTURN(true);
-            }, settings.P2P_TIMEOUT);
+            }, settings.p2pAttemptTimeout);
 
-            this.rtcConnection = new RTCPeerConnection({ iceServers: settings.STUN_SERVERS.map(s=>({urls:s})) });
+            this.rtcConnection = new RTCPeerConnection({ iceServers: stunServers.map((s) => ({ urls: "stun:" + s })) });
             this.channel = new Promise((resolve) => {
                 this.rtcConnection!.ondatachannel = (e) => {
                     const channel = e.channel;
@@ -100,7 +98,7 @@ export class NostrRTCPeer extends EventEmitter<{
             this.candidateEmissionLoop = setInterval(() => {
                 emitCandidates();
             }, 10000);
-        }       
+        }
     }
 
     public useTURN(useTURN: boolean) {
@@ -108,7 +106,7 @@ export class NostrRTCPeer extends EventEmitter<{
             this.emit("p2pState", this, !useTURN);
         }
         this._useTURN = useTURN;
-        if(useTURN){
+        if (useTURN) {
             LOGGER.warn("Switching to TURN");
             this.markReady();
         } else {
@@ -116,8 +114,8 @@ export class NostrRTCPeer extends EventEmitter<{
         }
     }
 
-    private markReady(){
-        if(this.ready)return;
+    private markReady() {
+        if (this.ready) return;
         this.ready = true;
         this.emit("ready", this);
     }
@@ -128,7 +126,7 @@ export class NostrRTCPeer extends EventEmitter<{
     }
 
     public getStatus(): ConnectionStatus {
-        if (this.status === ConnectionStatus.connecting && Date.now() - this.lastStatusUpdate > this.settings.CONNECTING_TIMEOUT) {
+        if (this.status === ConnectionStatus.connecting && Date.now() - this.lastStatusUpdate > this.settings.connectionAttemptTimeout) {
             return ConnectionStatus.disconnected;
         }
         return this.status;
@@ -147,7 +145,7 @@ export class NostrRTCPeer extends EventEmitter<{
     }
 
     private initDataChannel(channel: RTCDataChannel) {
-        const onOpen = () =>{
+        const onOpen = () => {
             channel.binaryType = "arraybuffer";
             channel.addEventListener("message", (e) => {
                 const data: Uint8Array = e.data;
@@ -173,7 +171,7 @@ export class NostrRTCPeer extends EventEmitter<{
     }
 
     public async connect(): Promise<RTCSessionDescriptionInit | undefined> {
-        if(!this.rtcConnection){
+        if (!this.rtcConnection) {
             this.useTURN(true);
             return undefined;
         }
@@ -183,7 +181,7 @@ export class NostrRTCPeer extends EventEmitter<{
 
         const offer = await this.rtcConnection.createOffer();
         await this.rtcConnection?.setLocalDescription(offer);
-        
+
         return {
             sdp: offer.sdp,
             type: offer.type,
@@ -191,7 +189,7 @@ export class NostrRTCPeer extends EventEmitter<{
     }
 
     public async open(description: RTCSessionDescriptionInit): Promise<RTCSessionDescriptionInit | undefined> {
-        if(!this.rtcConnection || !description ){
+        if (!this.rtcConnection || !description) {
             this.useTURN(true);
             return undefined;
         }
@@ -205,8 +203,8 @@ export class NostrRTCPeer extends EventEmitter<{
         };
     }
 
-    public async setRemoteDescription(description: RTCSessionDescriptionInit|undefined) {
-        if(!this.rtcConnection || !description ){
+    public async setRemoteDescription(description: RTCSessionDescriptionInit | undefined) {
+        if (!this.rtcConnection || !description) {
             this.useTURN(true);
             return;
         }
@@ -214,7 +212,7 @@ export class NostrRTCPeer extends EventEmitter<{
     }
 
     public async addRemoteIceCandidates(candidates: RTCIceCandidate[]) {
-        if(!this.rtcConnection) return;
+        if (!this.rtcConnection) return;
         for (const candidate of candidates) {
             await this.rtcConnection?.addIceCandidate(candidate);
         }
@@ -284,7 +282,7 @@ export class NostrRTCPeer extends EventEmitter<{
     }
 
     public isTURN(): boolean {
-        return  !!this.turn && this._useTURN;
+        return !!this.turn && this._useTURN;
     }
 
     public async write(data: Uint8Array) {

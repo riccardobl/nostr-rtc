@@ -35,15 +35,16 @@ export type NostrKeyPair = {
 };
 
 export interface NostrAdapter {
-    publishToRelays(eventTemplate: NostrEvent, keyPair: NostrKeyPair, relays?: string[]): Promise<SignedNostrEvent>;
+    publishToRelays(relays: string[], eventTemplate: NostrEvent, keyPair: NostrKeyPair): Promise<SignedNostrEvent>;
     subscribeToRelays(
+        relays: string[],
         filters: NostrFilter[],
         onEvent: (sub: NostrSubscription, event: SignedNostrEvent) => Promise<void>,
         onClose?: (sub: NostrSubscription) => Promise<void>,
         onEose?: (sub: NostrSubscription) => Promise<void>,
-        relays?: string[],
     ): Promise<NostrSubscription>;
     encrypt(recipient: string, data: string, keyPair: NostrKeyPair): Promise<string>;
     decrypt(sender: string, data: string, keyPair: NostrKeyPair): Promise<string>;
     newKeyPair(privKey?: string): NostrKeyPair;
+    getInfo(relay: string): Promise<{ [key: string]: string }>;
 }
