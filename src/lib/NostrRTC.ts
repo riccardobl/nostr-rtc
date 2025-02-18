@@ -259,7 +259,7 @@ export class NostrRTC extends EventEmitter<{
         // initialize connection
         let connection = this.connections.get(pubkey);
         if (connection) throw new Error("Peer already connected or connecting");
-        connection = new NostrRTCPeer(discoveredPeer, this.stunServers);
+        connection = new NostrRTCPeer(discoveredPeer, this.stunServers, undefined, this.config.rtcSettings);
 
         if (discoveredPeer.turnRelays?.length) {
             const turn = new NostrTURN(this.nostr, connection.getConnectionId(), this.localKeyPair, discoveredPeer, this.config.turnSettings);
@@ -384,7 +384,7 @@ export class NostrRTC extends EventEmitter<{
         let connection: NostrRTCPeer | undefined;
         try {
             // initialize and register connection
-            connection = new NostrRTCPeer(remotePeer, connectionId);
+            connection = new NostrRTCPeer(remotePeer, this.stunServers, connectionId, this.config.rtcSettings);
             // ({ connection, description } = await NostrRTCPeer.open(remotePeer, connectionId, remoteDescription));
             if (remotePeer.turnRelays?.length) {
                 const turn = new NostrTURN(this.nostr, connection.getConnectionId(), this.localKeyPair, remotePeer, this.config.turnSettings);
