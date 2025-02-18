@@ -80,6 +80,10 @@ jobs:
         name: www.zip
         path: dist/www
 
+    - name: Prepare Github Pages
+      run: |
+        cp src/demo/index.html dist/www/index.html
+        
     - name: Deploy to GitHub Pages
       uses: peaceiris/actions-gh-pages@v3
       with:
