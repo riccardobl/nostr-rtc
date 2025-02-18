@@ -41,7 +41,6 @@ export class PeerInfo {
     }
 }
 
-
 export type NostrRTCOptions = {
     stunServers?: string[];
     turnRelays?: string[];
@@ -51,7 +50,6 @@ export type NostrRTCOptions = {
     useRelaysTurn: boolean;
     useRelaysStun: boolean;
 };
-
 
 export class NostrRTC extends EventEmitter<{
     discover: (peer: PeerInfo) => void;
@@ -74,7 +72,6 @@ export class NostrRTC extends EventEmitter<{
     private readonly nostr: NostrAdapter;
     private readonly metadata: { [key: string]: string };
     private readonly config: NostrRTCOptions;
-    
 
     private readonly turnRelays: string[];
     private readonly signalingRelays: string[];
@@ -162,20 +159,18 @@ export class NostrRTC extends EventEmitter<{
         // load more turn and stun servers from nip-11 info
         for (const relay of this.signalingRelays) {
             const info = await this.nostr.getInfo(relay);
-            if(this.config.useRelaysStun){
+            if (this.config.useRelaysStun) {
                 if (info?.stun?.length) {
                     this.stunServers.push(...info.stun);
                 }
             }
 
-            if(this.config.useRelaysTurn){
+            if (this.config.useRelaysTurn) {
                 if (info?.turn?.length) {
                     this.turnRelays.push(...info.turn);
                 }
             }
         }
-
-       
 
         LOGGER.info("Starting NostrRTC with\n    signaling:", this.signalingRelays, "\n    turn:", this.turnRelays, "\n    stun:", this.stunServers);
 
